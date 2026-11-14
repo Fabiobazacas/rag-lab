@@ -60,27 +60,9 @@ Ao criar um bucket, o provedor AWS lê a configuração de Object Lock (`s3:GetB
 
 ## Rodando no AWS Cloud Shell
 
-O Cloud Shell já traz `aws`, `python3`, `git` e `curl`, mas não o Terraform. Nesta máquina de teste o fluxo foi validado no Windows; no Cloud Shell, confira os pontos abaixo antes da aula.
-
-```bash
-# Terraform (binário Linux; não precisa de root)
-TFV=1.16.4
-mkdir -p ~/bin && cd /tmp
-curl -sLO https://releases.hashicorp.com/terraform/$TFV/terraform_${TFV}_linux_amd64.zip
-unzip -qo terraform_${TFV}_linux_amd64.zip -d ~/bin
-export PATH="$HOME/bin:$PATH"
-terraform version
-
-# O provedor AWS ocupa cerca de 700 MB e o Cloud Shell guarda só 1 GB em $HOME.
-# Mantenha o provedor fora do $HOME (o /tmp é apagado quando a sessão termina; o init baixa de novo).
-export TF_DATA_DIR=/tmp/tfdata
-export TF_PLUGIN_CACHE_DIR=/tmp/tfcache
-mkdir -p "$TF_PLUGIN_CACHE_DIR"
-```
+O roteiro completo, com instalação do Terraform, limite de 1 GB do `$HOME`, retomada de sessão expirada e problemas comuns, está em [CLOUDSHELL.md](CLOUDSHELL.md).
 
 O `.terraform.lock.hcl` está no repositório e fixa o provedor AWS 5.100.0 e o archive 2.8.1, com hashes para Linux, Windows e macOS. Não apague esse arquivo.
-
-Se a sessão do Cloud Shell expirar no meio, o `terraform.tfstate` em `$HOME` continua lá. Refaça os `export` e rode `terraform plan` para retomar.
 
 ## Testes para conferir que tudo funciona
 
