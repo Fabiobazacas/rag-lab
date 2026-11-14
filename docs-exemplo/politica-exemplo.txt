@@ -1,0 +1,9 @@
+Política de exemplo para o laboratório (texto fictício, sem valor real).
+
+1. Prazo de resposta. Toda solicitação de cliente deve receber uma primeira resposta em até 2 dias úteis. Casos de reclamação formal têm prazo de 5 dias úteis para resposta conclusiva.
+
+2. Registro. Cada atendimento deve ser registrado com data, canal, responsável e resultado. O registro deve ser mantido por 5 anos.
+
+3. Dados pessoais. Documentos com dados pessoais só podem ser consultados por quem tem necessidade de acesso. Ao enviar dados a sistemas externos, é preciso registrar a base legal.
+
+4. Escalonamento. Quando o atendente não souber responder, deve encaminhar o caso ao time responsável e avisar o cliente do novo prazo.

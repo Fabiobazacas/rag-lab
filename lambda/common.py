@@ -1,0 +1,77 @@
+"""Funções comuns: chamadas à API do Gemini (sem dependências externas)."""
+import json
+import math
+import os
+import urllib.error
+import urllib.request
+
+API = "https://generativelanguage.googleapis.com/v1beta/"
+KEY = os.environ["GEMINI_API_KEY"]
+GEN_MODEL = os.environ["GEMINI_MODEL"]
+EMBED_MODEL = os.environ["EMBED_MODEL"]
+DIMS = 768
+
+
+class GeminiError(Exception):
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+
+
+def _post(path, body, timeout=25):
+    req = urllib.request.Request(
+        API + path,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "x-goog-api-key": KEY},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise GeminiError(e.code, e.read().decode(errors="replace")[:300])
+    except urllib.error.URLError as e:
+        raise GeminiError(0, f"sem acesso à API do Gemini: {e.reason}")
+
+
+def _normalize(v):
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+def embed(texts, task):
+    """Devolve um vetor normalizado por texto. task: RETRIEVAL_DOCUMENT ou RETRIEVAL_QUERY."""
+    out = []
+    for i in range(0, len(texts), 50):
+        batch = texts[i : i + 50]
+        body = {
+            "requests": [
+                {
+                    "model": f"models/{EMBED_MODEL}",
+                    "content": {"parts": [{"text": t}]},
+                    "taskType": task,
+                    "outputDimensionality": DIMS,
+                }
+                for t in batch
+            ]
+        }
+        data = _post(f"models/{EMBED_MODEL}:batchEmbedContents", body)
+        out += [_normalize(e["values"]) for e in data["embeddings"]]
+    return out
+
+
+def generate(system, prompt, max_tokens):
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
+    }
+    data = _post(f"models/{GEN_MODEL}:generateContent", body)
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts)
+    usage = data.get("usageMetadata", {})
+    return text, {
+        "tokens_in": usage.get("promptTokenCount", 0),
+        "tokens_out": usage.get("candidatesTokenCount", 0),
+    }
