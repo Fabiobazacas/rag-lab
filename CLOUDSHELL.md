@@ -59,10 +59,13 @@ mkdir -p "$TF_PLUGIN_CACHE_DIR"
 ```bash
 export AWS_DEFAULT_REGION=us-east-1
 
-# Digite a chave sem aspas visíveis no histórico: o comando abaixo pede a chave sem mostrá-la
-read -rsp "Chave do Gemini: " TF_VAR_gemini_api_key; echo
-export TF_VAR_gemini_api_key
+# Troque <chave_api> pela sua chave, mantendo as aspas simples.
+export TF_VAR_gemini_api_key='<chave_api>'
 ```
+
+O valor da variável deve ser só a chave. Para conferir sem mostrá-la, veja o tamanho com `echo ${#TF_VAR_gemini_api_key}` e compare com o tamanho da chave copiada. Se o número for 22 maior (o tamanho de `TF_VAR_gemini_api_key=`), o nome da variável foi colado junto com a chave: refaça o comando.
+
+A chave fica no histórico do terminal desta sessão. Não copie esse histórico para lugar nenhum e revogue a chave no AI Studio depois da aula.
 
 ### 1.5 Conferir as credenciais
 
@@ -163,8 +166,7 @@ export TF_DATA_DIR=/tmp/tfdata
 export TF_PLUGIN_CACHE_DIR=/tmp/tfcache
 mkdir -p "$TF_PLUGIN_CACHE_DIR"
 export AWS_DEFAULT_REGION=us-east-1
-read -rsp "Chave do Gemini: " TF_VAR_gemini_api_key; echo
-export TF_VAR_gemini_api_key
+export TF_VAR_gemini_api_key='<chave_api>'     # troque pela sua chave
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 terraform init     # baixa o provedor de novo
 terraform plan     # deve mostrar "No changes" se nada mudou

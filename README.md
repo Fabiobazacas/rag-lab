@@ -9,6 +9,40 @@ Cria um RAG pequeno, para a aula 4:
 
 Sem Bedrock e sem banco vetorial gerenciado: o índice é um arquivo JSON e a busca é feita na própria função. Serve para poucos documentos.
 
+## Arquitetura
+
+```mermaid
+flowchart LR
+    subgraph ingestao["Case 1: ingestão (você executa uma vez)"]
+        direction LR
+        CLI["aws lambda invoke"] --> ING["Lambda ingest"]
+        ING -- "1. lê docs/" --> S3[("S3<br/>docs/ + index.json")]
+        ING -- "2. embeddings dos trechos" --> GEM["Gemini API<br/>(fora da AWS)"]
+        ING -- "3. grava index.json" --> S3
+    end
+
+    subgraph consulta["Case 2: consulta (a cada pergunta)"]
+        direction LR
+        USR["curl / cliente"] -- "POST /ask" --> APIGW["API Gateway<br/>(2 req/s)"]
+        APIGW --> ASK["Lambda ask"]
+        ASK -- "1. lê index.json" --> S3
+        ASK -- "2. embedding da pergunta<br/>e resposta com os trechos" --> GEM
+        ASK -- "3. registra tokens e latência" --> DDB[("DynamoDB<br/>rag-lab-log")]
+    end
+
+    ING -. logs .-> CW["CloudWatch Logs"]
+    ASK -. logs .-> CW
+```
+
+Como a consulta funciona:
+
+1. A `ask` carrega o `index.json` do S3 (trechos e seus vetores).
+2. Gera o embedding da pergunta no Gemini e compara com os vetores do índice (produto escalar de vetores normalizados, igual à similaridade de cosseno), dentro da própria função.
+3. Envia ao Gemini a pergunta e os `TOP_K` trechos mais próximos, e devolve a resposta com as fontes (`[docs/...#n]`).
+4. Grava no DynamoDB uma linha por consulta, com tokens e latência.
+
+As duas funções usam o `LabRole` e saem para a internet para falar com o Gemini. O bucket é criado pela CLI e só lido pelo Terraform (veja "Por que o bucket não é do Terraform").
+
 ## Antes de começar
 
 1. Terraform 1.5 ou mais novo e AWS CLI instalados (no Cloud Shell, veja a seção abaixo).
