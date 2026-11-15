@@ -165,7 +165,7 @@ Executado em 14/11/2026, conta AWS Academy, `us-east-1`, a partir do Windows.
 | Chave inválida | HTTP 502, registrado como `gemini_400` |
 | `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras em S3, Lambda, DynamoDB, API Gateway e CloudWatch |
 
-Não testado ainda: execução dentro do Cloud Shell (instalação do Terraform, limite de 1 GB, saída para a internet).
+Execução dentro do Cloud Shell: ensaiada pelo autor do laboratório (informação do próprio autor, sem registro de saída neste repositório). O restante dos testes acima foi feito no Windows.
 
 ### Teste do suporte a PDF (15/11/2026)
 

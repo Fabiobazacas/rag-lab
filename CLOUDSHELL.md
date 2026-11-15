@@ -2,7 +2,7 @@
 
 Roteiro completo para rodar o laboratório inteiro dentro do AWS Cloud Shell, sem instalar nada no seu computador. Para entender o que cada parte faz, veja o [README](README.md).
 
-> Este roteiro ainda não foi ensaiado dentro do Cloud Shell. Foi validado no Windows. Se algum comando falhar, veja "Problemas comuns" no final.
+> Este roteiro foi ensaiado no Cloud Shell pelo autor e validado no Windows. Se algum comando falhar, veja "Problemas comuns" no final.
 
 ## Antes de começar
 
