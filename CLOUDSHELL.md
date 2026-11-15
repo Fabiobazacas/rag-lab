@@ -92,7 +92,7 @@ aws s3api create-bucket --bucket "rag-lab-docs-$ACCOUNT"
 ```bash
 cd ~/rag-lab
 terraform init
-terraform plan        # leia o que será criado (11 recursos)
+terraform plan        # leia o que será criado (16 recursos)
 terraform apply       # digite yes
 ```
 

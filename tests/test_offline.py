@@ -61,8 +61,9 @@ fake_boto3.resource = lambda *_: types.SimpleNamespace(Table=lambda _n: FakeTabl
 sys.modules["boto3"] = fake_boto3
 
 # ---------- Gemini falso ----------
-MODE = {"fail": None, "finish": "STOP"}  # fail: None | código HTTP a devolver
+MODE = {"fail": None, "finish": "STOP", "queries": []}  # fail: None | código HTTP; queries: buscas que o agente falso pede, uma rodada por item
 PDF_CALLS = []  # uma entrada por PDF enviado ao Gemini
+AGENT_REQS = []  # corpos das chamadas do agente (as que trazem 'tools' ou functionResponse)
 PDF_TEXT = "Declaracao Universal dos Direitos Humanos. Artigo 1: todos os seres humanos nascem livres e iguais em dignidade e em direitos."
 
 
@@ -87,14 +88,26 @@ def fake_urlopen(req, timeout=None):
         out = {"candidates": [{"content": {"parts": [{"text": PDF_TEXT}]}, "finishReason": MODE["finish"]}],
                "usageMetadata": {"promptTokenCount": 2600, "candidatesTokenCount": 40}}
     else:
-        out = {"candidates": [{"content": {"parts": [{"text": "Resposta [docs/politica-exemplo.txt#1]"}]}}],
-               "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}}
+        rounds = sum(1 for c in body["contents"] if any("functionResponse" in p for p in c["parts"]))
+        if "tools" in body or rounds:
+            AGENT_REQS.append(body)
+        if "tools" in body and rounds < len(MODE["queries"]):
+            q = MODE["queries"][rounds]
+            qs = q if isinstance(q, list) else [q]
+            parts = [{"functionCall": {"name": "buscar_documentos", "args": {"consulta": x}}, "thoughtSignature": f"sig{rounds}"}
+                     for x in qs]
+            out = {"candidates": [{"content": {"role": "model", "parts": parts}}],
+                   "usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 7}}
+        else:
+            out = {"candidates": [{"content": {"parts": [{"text": "Resposta [docs/politica-exemplo.txt#1]"}]}}],
+                   "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}}
     return io.BytesIO(json.dumps(out).encode())
 
 
 patcher = mock.patch("urllib.request.urlopen", fake_urlopen)
 patcher.start()
 
+import agent  # noqa: E402
 import ask  # noqa: E402
 import ingest  # noqa: E402
 
@@ -104,14 +117,24 @@ def post(question):
     return r["statusCode"], json.loads(r["body"])
 
 
+def post_agent(question):
+    r = agent.handler({"body": json.dumps({"question": question})}, None)
+    return r["statusCode"], json.loads(r["body"])
+
+
 class Offline(unittest.TestCase):
     def setUp(self):
         STORE.clear()
         LOG.clear()
         PDF_CALLS.clear()
+        AGENT_REQS.clear()
         MODE["fail"] = None
         MODE["finish"] = "STOP"
+        MODE["queries"] = []
         ask._index = None
+        agent._index = None
+        agent.MAX_STEPS = 4
+        agent.DEADLINE_S = 22
 
     def load_docs(self):
         for p in (ROOT / "docs-exemplo").iterdir():
@@ -215,6 +238,71 @@ class Offline(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(res["pendentes"], ["docs/dudh.pdf"])
         self.assertEqual(PDF_CALLS, [])
+
+    # ---------- Agente ----------
+    def load_all(self):
+        self.load_docs()
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 fake"
+        ingest.handler({}, None)
+
+    def test_14_agente_faz_duas_buscas_e_junta_as_fontes(self):
+        self.load_all()
+        MODE["queries"] = ["prazo de resposta de uma reclamação formal", "todos os seres humanos nascem livres e iguais"]
+        status, body = post_agent("Compare a política de reclamação com o artigo 1 da DUDH")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["steps"]), 2)
+        self.assertTrue(body["steps"][0]["sources"][0].startswith("docs/politica-exemplo.txt#"))
+        self.assertTrue(body["steps"][1]["sources"][0].startswith("docs/dudh.pdf#"))
+        self.assertEqual(len(body["sources"]), len(set(body["sources"])))  # sem repetição
+        self.assertTrue(any(s.startswith("docs/dudh.pdf#") for s in body["sources"]))
+        self.assertEqual((body["tokens_in"], body["tokens_out"]), (100 + 100 + 10, 7 + 7 + 5))
+        self.assertEqual(LOG[-1]["mode"], "agent")
+        self.assertEqual(LOG[-1]["searches"], 2)
+        # o histórico devolve a chamada do modelo (com a assinatura) seguida do resultado
+        ultima = AGENT_REQS[-1]["contents"]
+        self.assertEqual(ultima[1]["parts"][0]["thoughtSignature"], "sig0")
+        self.assertIn("functionResponse", ultima[2]["parts"][0])
+
+    def test_15_agente_pode_responder_sem_buscar(self):
+        self.load_all()
+        status, body = post_agent("oi")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["steps"], [])
+        self.assertEqual(body["sources"], [])
+
+    def test_16_limite_de_passos_forca_a_resposta_final_sem_ferramenta(self):
+        self.load_all()
+        agent.MAX_STEPS = 2
+        MODE["queries"] = ["prazo"] * 10  # o modelo nunca para sozinho
+        status, body = post_agent("prazo")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["steps"]), 2)
+        self.assertNotIn("tools", AGENT_REQS[-1])
+        self.assertTrue(body["answer"])
+
+    def test_17_prazo_estourado_pula_a_ferramenta(self):
+        self.load_all()
+        agent.DEADLINE_S = -1
+        MODE["queries"] = ["prazo"]
+        status, body = post_agent("prazo")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["steps"], [])
+
+    def test_18_agente_limita_buscas_por_rodada(self):
+        self.load_all()
+        MODE["queries"] = [["a", "b", "c", "d", "e"]]
+        _, body = post_agent("muitas buscas")
+        self.assertEqual(len(body["steps"]), agent.MAX_CALLS_PER_STEP)
+
+    def test_19_agente_erros_http(self):
+        self.assertEqual(post_agent("oi")[0], 409)  # sem índice
+        self.assertEqual(post_agent("  ")[0], 400)
+        self.load_all()
+        MODE["fail"] = 429
+        self.assertEqual(post_agent("prazo")[0], 503)
+        MODE["fail"] = 400
+        self.assertEqual(post_agent("prazo")[0], 502)
+        self.assertEqual(LOG[-1]["status"], "gemini_400")
 
 
 if __name__ == "__main__":

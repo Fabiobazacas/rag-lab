@@ -34,6 +34,12 @@ variable "top_k" {
   default     = 4
 }
 
+variable "agent_max_steps" {
+  description = "Rodadas de busca que o agente (POST /agent) pode fazer antes de responder. Cada rodada reenvia o contexto ao modelo."
+  type        = number
+  default     = 4
+}
+
 variable "max_output_tokens" {
   description = "Teto de tokens da resposta (guardrail de custo)."
   type        = number

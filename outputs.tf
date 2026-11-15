@@ -3,6 +3,11 @@ output "api_url" {
   value       = "${aws_apigatewayv2_api.http.api_endpoint}/ask"
 }
 
+output "agent_url" {
+  description = "Endereço do agente. Chame com POST em /agent."
+  value       = "${aws_apigatewayv2_api.http.api_endpoint}/agent"
+}
+
 output "bucket" {
   description = "Bucket dos documentos (pasta docs/) e do índice."
   value       = data.aws_s3_bucket.docs.id

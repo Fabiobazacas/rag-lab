@@ -5,7 +5,8 @@ Cria um RAG pequeno, para a aula 4:
 - **S3**: guarda os documentos (`docs/`) e o índice (`index.json`).
 - **Função `ingest`** (Case 1): lê `docs/` (`.txt`, `.md` e `.pdf`, inclusive escaneado), divide em trechos, gera embeddings no Gemini e grava o índice.
 - **Função `ask`** (Case 2): recebe a pergunta, acha os trechos mais próximos, pergunta ao Gemini e responde com as fontes.
-- **API Gateway** (`POST /ask`), **DynamoDB** (registro de cada consulta) e **CloudWatch** (logs).
+- **Função `agent`** (extensão): o mesmo RAG, mas o modelo decide quando e quantas vezes buscar (`POST /agent`). Veja "Extensão: agente".
+- **API Gateway** (`POST /ask` e `POST /agent`), **DynamoDB** (registro de cada consulta) e **CloudWatch** (logs).
 
 Sem Bedrock e sem banco vetorial gerenciado: o índice é um arquivo JSON e a busca é feita na própria função. Serve para poucos documentos.
 
@@ -23,8 +24,8 @@ flowchart LR
 
     subgraph consulta["Case 2: consulta (a cada pergunta)"]
         direction LR
-        USR["curl / cliente"] -- "POST /ask" --> APIGW["API Gateway<br/>(2 req/s)"]
-        APIGW --> ASK["Lambda ask"]
+        USR["curl / cliente"] -- "POST /ask ou /agent" --> APIGW["API Gateway<br/>(2 req/s)"]
+        APIGW --> ASK["Lambda ask<br/>(ou agent: busca em laço)"]
         ASK -- "1. lê index.json" --> S3
         ASK -- "2. embedding da pergunta<br/>e resposta com os trechos" --> GEM
         ASK -- "3. registra tokens e latência" --> DDB[("DynamoDB<br/>rag-lab-log")]
@@ -72,7 +73,7 @@ aws s3api create-bucket --bucket "rag-lab-docs-$ACCOUNT"
 
 # 5. Terraform
 terraform init
-terraform plan        # leia o que será criado (11 recursos)
+terraform plan        # leia o que será criado (16 recursos)
 terraform apply       # digite yes
 
 # 6. Envie os documentos e monte o índice
@@ -92,6 +93,23 @@ Guarde como evidência: a tela do `terraform apply`, a resposta do passo 7 e um 
 
 Ao criar um bucket, o provedor AWS lê a configuração de Object Lock (`s3:GetBucketObjectLockConfiguration`). A política da organização do AWS Academy (SCP) nega essa leitura, e o `terraform apply` termina em erro `AccessDenied ... explicit deny in a service control policy`. Testado com o provedor 4.67, 5.100 e 6.73: todos falham. A CLI não faz essa leitura, então ela cria o bucket e o Terraform o referencia com `data "aws_s3_bucket"`.
 
+## Extensão: agente
+
+A `ask` segue um fluxo fixo: uma busca com a pergunta literal e uma resposta. A função `agent` (`POST /agent`) usa a chamada de ferramenta (*function calling*) do Gemini: o modelo recebe a ferramenta `buscar_documentos` e decide se busca, o que busca e se busca de novo, antes de responder.
+
+```bash
+AGENT=$(terraform output -raw agent_url)
+curl -s -X POST "$AGENT" -H 'Content-Type: application/json' \
+  -d '{"question":"Compare o prazo de reclamação formal com o artigo 1 da Declaração Universal dos Direitos Humanos."}'
+```
+
+A resposta traz, além de `answer`, `sources`, `tokens_in` e `tokens_out`, a lista `steps` com cada busca feita (`query` e `sources`). Compare com a mesma pergunta em `/ask`.
+
+- **Controles:** no máximo `agent_max_steps` rodadas de busca (padrão 4), 3 buscas por rodada e um prazo de 22 s. Ao estourar qualquer um, a ferramenta deixa de ser oferecida e o modelo responde com o que já tem.
+- **Custo:** cada rodada reenvia o contexto ao Gemini, então o consumo de tokens e a latência sobem. Na cota gratuita, uma turma inteira pode esgotá-la mais rápido do que com `/ask`.
+- **Registro:** cada chamada vai ao DynamoDB com `mode = agent` e `searches` (número de buscas).
+- **Por que não o Bedrock AgentCore:** o serviço (Runtime, Gateway, Memory) não é permitido no AWS Academy (testado em 15/11/2026: `AccessDeniedException`, "no identity-based policy allows"). Aqui o agente é um laço dentro de uma Lambda, sem memória entre chamadas.
+
 ## Rodando no AWS Cloud Shell
 
 O roteiro completo, com instalação do Terraform, limite de 1 GB do `$HOME`, retomada de sessão expirada e problemas comuns, está em [CLOUDSHELL.md](CLOUDSHELL.md).
@@ -102,7 +120,7 @@ O `.terraform.lock.hcl` está no repositório e fixa o provedor AWS 5.100.0 e o 
 
 | Teste | Como | Esperado |
 |---|---|---|
-| Código das funções (sem AWS) | `python3 tests/test_offline.py` | `Ran 7 tests ... OK` (S3, DynamoDB e Gemini simulados) |
+| Código das funções (sem AWS) | `python3 tests/test_offline.py` | `Ran 19 tests ... OK` (S3, DynamoDB e Gemini simulados) |
 | Credenciais | `aws sts get-caller-identity` | mostra a conta do laboratório |
 | LabRole | `aws iam get-role --role-name LabRole` | devolve o papel; se falhar, o laboratório não tem LabRole |
 | Saída para a internet | passo 6 (a ingestão chama o Gemini) | `{"ok": true, "chunks": N}` |
@@ -193,6 +211,21 @@ O fluxo do CLOUDSHELL.md (`docs-exemplo/` mais `docs-pdf/dudh.pdf` no mesmo buck
 | Pergunta sobre o artigo 1 da DUDH | cita "livres e iguais em dignidade e em direitos", fontes `docs/dudh.pdf#2` e `#3` |
 | Pergunta fora da base | "Não encontrei na base." |
 | `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras |
+
+### Teste do agente (15/11/2026)
+
+`tests/test_offline.py` com 19 testes (6 novos, do agente) e um teste real na AWS, com o mesmo bucket (`docs-exemplo/` e `docs-pdf/dudh.pdf`). `terraform apply` criou 16 recursos e o `destroy` removeu os 16, sem sobras.
+
+Pergunta composta: "Compare o prazo de resposta de uma reclamação formal com o que o artigo 1 da Declaração Universal dos Direitos Humanos diz sobre dignidade."
+
+| | `/ask` | `/agent` |
+|---|---|---|
+| Buscas | 1, com a pergunta inteira | 2, uma por assunto |
+| Resposta | achou só a DUDH e disse que não encontrou o prazo | citou o prazo (5 dias úteis, `docs/politica-exemplo.txt#1`) e o artigo 1 (`docs/dudh.pdf#2`, `#3`) |
+| Tokens (entrada / saída) | 1.224 / 97 | 2.644 / 344 |
+| Tempo | 2 s | 4 s |
+
+Pergunta simples sobre o prazo: o agente fez 1 busca (1.425 / 56 tokens, 2 s). Pergunta fora da base (capital da França): 1 busca e "não encontrei". Os números de uma só execução variam com o modelo.
 
 ## Problemas conhecidos
 

@@ -88,6 +88,28 @@ def transcribe_pdf(data, timeout, max_tokens=8192):
     )
 
 
+def generate_step(system, contents, tools, max_tokens, timeout=25):
+    """Um passo do agente: envia a conversa (e as ferramentas, se houver).
+    Devolve (conteudo do modelo, uso, finishReason). O conteudo e devolvido inteiro
+    porque o historico precisa repetir as partes do modelo (functionCall e assinaturas)."""
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": contents,
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.2},
+    }
+    if tools:
+        body["tools"] = tools
+    data = _post(f"models/{GEN_MODEL}:generateContent", body, timeout=timeout)
+    cand = (data.get("candidates") or [{}])[0]
+    content = cand.get("content") or {}
+    usage = data.get("usageMetadata", {})
+    return (
+        {"role": "model", "parts": content.get("parts") or []},
+        {"tokens_in": usage.get("promptTokenCount", 0), "tokens_out": usage.get("candidatesTokenCount", 0)},
+        cand.get("finishReason", ""),
+    )
+
+
 def generate(system, prompt, max_tokens):
     body = {
         "systemInstruction": {"parts": [{"text": system}]},

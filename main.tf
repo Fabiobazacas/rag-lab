@@ -68,6 +68,11 @@ resource "aws_cloudwatch_log_group" "ask" {
   retention_in_days = 7
 }
 
+resource "aws_cloudwatch_log_group" "agent" {
+  name              = "/aws/lambda/${var.name_prefix}-agent"
+  retention_in_days = 7
+}
+
 locals {
   common_env = {
     GEMINI_API_KEY   = var.gemini_api_key
@@ -114,6 +119,26 @@ resource "aws_lambda_function" "ask" {
   depends_on = [aws_cloudwatch_log_group.ask]
 }
 
+# Extensão: o modelo decide quando e quantas vezes buscar (POST /agent).
+resource "aws_lambda_function" "agent" {
+  function_name    = "${var.name_prefix}-agent"
+  role             = data.aws_iam_role.lab.arn
+  runtime          = "python3.12"
+  handler          = "agent.handler"
+  filename         = data.archive_file.code.output_path
+  source_code_hash = data.archive_file.code.output_base64sha256
+  timeout          = 30 # o API Gateway HTTP corta em 30 s
+  memory_size      = 512
+
+  environment {
+    variables = merge(local.common_env, {
+      AGENT_MAX_STEPS = tostring(var.agent_max_steps)
+    })
+  }
+
+  depends_on = [aws_cloudwatch_log_group.agent]
+}
+
 # ---------- API ----------
 resource "aws_apigatewayv2_api" "http" {
   name          = "${var.name_prefix}-api"
@@ -133,6 +158,19 @@ resource "aws_apigatewayv2_route" "ask" {
   target    = "integrations/${aws_apigatewayv2_integration.ask.id}"
 }
 
+resource "aws_apigatewayv2_integration" "agent" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.agent.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "agent" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "POST /agent"
+  target    = "integrations/${aws_apigatewayv2_integration.agent.id}"
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "$default"
@@ -143,6 +181,14 @@ resource "aws_apigatewayv2_stage" "default" {
     throttling_burst_limit = 5
     throttling_rate_limit  = 2
   }
+}
+
+resource "aws_lambda_permission" "api_agent" {
+  statement_id  = "AllowApiGatewayAgent"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.agent.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
 resource "aws_lambda_permission" "api" {
