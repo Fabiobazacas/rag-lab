@@ -110,6 +110,15 @@ aws lambda invoke --function-name "$(terraform output -raw ingest_function)" /de
 
 Esperado: `{"ok": true, "chunks": N}`. Se aparecer erro, veja "Problemas comuns".
 
+Para testar com um PDF escaneado (opcional), envie o PDF de exemplo e rode a ingestão de novo:
+
+```bash
+aws s3 cp docs-pdf/dudh.pdf "s3://$BUCKET/docs/"
+aws lambda invoke --function-name "$(terraform output -raw ingest_function)" /dev/stdout
+```
+
+A resposta passa a mostrar `transcritos` e os tokens gastos (cerca de 6.500 na primeira vez). Depois a transcrição vem do cache e não gasta mais. Para usar outro PDF, troque o arquivo. Veja "PDF e consumo de tokens do Gemini" no README, e não use documento com dado pessoal real.
+
 ### 3.2 Fazer perguntas
 
 ```bash

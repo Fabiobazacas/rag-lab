@@ -3,7 +3,7 @@
 Cria um RAG pequeno, para a aula 4:
 
 - **S3**: guarda os documentos (`docs/`) e o índice (`index.json`).
-- **Função `ingest`** (Case 1): lê `docs/`, divide em trechos, gera embeddings no Gemini e grava o índice.
+- **Função `ingest`** (Case 1): lê `docs/` (`.txt`, `.md` e `.pdf`, inclusive escaneado), divide em trechos, gera embeddings no Gemini e grava o índice.
 - **Função `ask`** (Case 2): recebe a pergunta, acha os trechos mais próximos, pergunta ao Gemini e responde com as fontes.
 - **API Gateway** (`POST /ask`), **DynamoDB** (registro de cada consulta) e **CloudWatch** (logs).
 
@@ -110,6 +110,8 @@ O `.terraform.lock.hcl` está no repositório e fixa o provedor AWS 5.100.0 e o 
 | Pergunta fora da base | pergunte algo que não está nos documentos (ex.: capital da França) | diz que não encontrou na base |
 | Pergunta vazia | envie `{"question":""}` | HTTP 400 |
 | Registro | `aws dynamodb scan --table-name "$(terraform output -raw log_table)"` | uma linha por consulta, com tokens e latência |
+| PDF | `aws s3 cp docs-pdf/dudh.pdf "s3://$BUCKET/docs/"` e repita o passo 6 | `"transcritos": ["docs/dudh.pdf"]` e os tokens gastos |
+| Cache do PDF | repita o passo 6 sem mudar o PDF | resposta sem `transcritos` nem tokens, em poucos segundos |
 | Erro tratado | `export TF_VAR_gemini_api_key=invalida`, `terraform apply`, nova pergunta | resposta 502, e o erro (`gemini_400`) fica no registro |
 
 ## Custo e limites
@@ -117,7 +119,20 @@ O `.terraform.lock.hcl` está no repositório e fixa o provedor AWS 5.100.0 e o 
 - O gasto da AWS aparece no painel do laboratório. O Gemini é cobrado fora da AWS (consulte a página de preços do Google AI Studio).
 - O API Gateway limita a 2 chamadas por segundo (`main.tf`, `default_route_settings`).
 - A resposta tem teto de `max_output_tokens` (padrão 512).
-- A função tem 30 s de tempo máximo.
+- A função `ask` tem 30 s de tempo máximo.
+
+### PDF e consumo de tokens do Gemini
+
+O PDF é enviado inteiro ao Gemini, que devolve o texto (serve para PDF escaneado). Isso gasta tokens, então há limites e um cache:
+
+- **Cache:** a transcrição fica em `cache/` no bucket, ligada ao conteúdo do PDF. Repetir a ingestão não gasta tokens, e só um PDF novo ou alterado é transcrito de novo.
+- **Custo por PDF:** cerca de 500 tokens de entrada por página e até 8.192 de saída (`MAX_PDF_TOKENS` em `lambda/ingest.py`). Medido com o PDF de exemplo (7 páginas, texto digital): 3.773 de entrada e 2.728 de saída, em 9 s. Um PDF escaneado de 5 páginas gastou 2.649 e 5.392, em 15 s: escaneado gasta mais saída, porque o Gemini lê o texto da imagem.
+- **Tamanho:** PDFs acima de 10 MB são ignorados. Se o texto passar de 8.192 tokens (de 7 a 8 páginas de texto escaneado, ou bem mais de texto digital), a transcrição é cortada e a resposta traz o arquivo em `truncados`.
+- **Tempo:** a função `ingest` tem 120 s. Sem tempo para outro PDF, ele fica em `pendentes`: rode o passo 6 de novo, e os já transcritos vêm do cache.
+- **Cota esgotada (HTTP 429):** o PDF vai para `ignorados` e a ingestão continua com os demais arquivos.
+- **A resposta da ingestão mostra `tokens_in` e `tokens_out`** gastos na execução. Para uma turma inteira usando a mesma chave, some o consumo de todos antes de definir quantos PDFs cada aluno pode enviar.
+- **PDF de exemplo:** `docs-pdf/dudh.pdf`, a Declaração Universal dos Direitos Humanos em português (ONU, 7 páginas, 49 KB, texto digital, sem dados pessoais). Fica fora de `docs-exemplo/` de propósito: o passo 6 envia essa pasta inteira, e o PDF só deve ser transcrito (e gastar tokens) quando você quiser testar PDF. Fonte: https://www.ohchr.org/sites/default/files/UDHR/Documents/UDHR_Translations/por.pdf
+- **Dados pessoais:** o PDF inteiro vai para o Google. Não use documento com CPF, RG ou outro dado pessoal real.
 
 ## Segurança
 
@@ -151,6 +166,20 @@ Executado em 14/11/2026, conta AWS Academy, `us-east-1`, a partir do Windows.
 | `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras em S3, Lambda, DynamoDB, API Gateway e CloudWatch |
 
 Não testado ainda: execução dentro do Cloud Shell (instalação do Terraform, limite de 1 GB, saída para a internet).
+
+### Teste do suporte a PDF (15/11/2026)
+
+Mesmo ambiente, com `tests/test_offline.py` em 13 testes (6 novos, de PDF) e um teste real na AWS com um PDF escaneado de 5 páginas (2,8 MB, uma certidão de matrícula de imóvel). Esse PDF foi retirado do repositório por conter dados pessoais; o exemplo atual é `docs-pdf/dudh.pdf`, que não passou pelo teste na AWS (só a transcrição direta no Gemini, sem a Lambda).
+
+| Item | Resultado |
+|---|---|
+| Primeira ingestão | 15 trechos; 2.649 tokens de entrada e 5.392 de saída; 15 s |
+| Segunda ingestão | 2 s, sem tokens (veio do cache em `cache/`) |
+| Perguntas sobre o PDF | HTTP 200, com fonte `docs/<arquivo>.pdf#n`; 1.931 a 1.956 tokens de entrada e 86 a 112 de saída |
+| Pergunta sobre o `.txt` com o PDF no índice | resposta correta, com fonte `docs/politica-exemplo.txt#1` |
+| `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras |
+
+A transcrição é feita por um modelo e pode ter erros. Eu li as respostas, mas não confrontei o texto inteiro com o PDF.
 
 ## Problemas conhecidos
 

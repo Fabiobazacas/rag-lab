@@ -1,4 +1,5 @@
 """Funções comuns: chamadas à API do Gemini (sem dependências externas)."""
+import base64
 import json
 import math
 import os
@@ -58,6 +59,33 @@ def embed(texts, task):
         data = _post(f"models/{EMBED_MODEL}:batchEmbedContents", body)
         out += [_normalize(e["values"]) for e in data["embeddings"]]
     return out
+
+
+PDF_PROMPT = (
+    "Transcreva fielmente o texto deste documento, na ordem das paginas, sem resumir, "
+    "sem comentar e sem corrigir. Inclua o texto que aparece como imagem (documento escaneado). "
+    "Responda somente com a transcricao."
+)
+
+
+def transcribe_pdf(data, timeout, max_tokens=8192):
+    """Transcreve um PDF (inclusive escaneado). Devolve (texto, uso, finishReason)."""
+    body = {
+        "contents": [{"parts": [
+            {"inline_data": {"mime_type": "application/pdf", "data": base64.b64encode(data).decode()}},
+            {"text": PDF_PROMPT},
+        ]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0},
+    }
+    resp = _post(f"models/{GEN_MODEL}:generateContent", body, timeout=timeout)
+    cand = (resp.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    usage = resp.get("usageMetadata", {})
+    return (
+        "".join(p.get("text", "") for p in parts),
+        {"tokens_in": usage.get("promptTokenCount", 0), "tokens_out": usage.get("candidatesTokenCount", 0)},
+        cand.get("finishReason", ""),
+    )
 
 
 def generate(system, prompt, max_tokens):

@@ -38,7 +38,8 @@ class FakeS3:
 
     def get_paginator(self, _):
         return types.SimpleNamespace(paginate=lambda Bucket, Prefix: [
-            {"Contents": [{"Key": k} for k in sorted(STORE) if k.startswith(Prefix)]}])
+            {"Contents": [{"Key": k, "Size": len(STORE[k]), "ETag": '"' + hashlib.md5(STORE[k]).hexdigest() + '"'}
+                           for k in sorted(STORE) if k.startswith(Prefix)]}])
 
     def get_object(self, Bucket, Key):
         if Key not in STORE:
@@ -60,7 +61,9 @@ fake_boto3.resource = lambda *_: types.SimpleNamespace(Table=lambda _n: FakeTabl
 sys.modules["boto3"] = fake_boto3
 
 # ---------- Gemini falso ----------
-MODE = {"fail": None}  # None | código HTTP a devolver
+MODE = {"fail": None, "finish": "STOP"}  # fail: None | código HTTP a devolver
+PDF_CALLS = []  # uma entrada por PDF enviado ao Gemini
+PDF_TEXT = "Declaracao Universal dos Direitos Humanos. Artigo 1: todos os seres humanos nascem livres e iguais em dignidade e em direitos."
 
 
 def _vec(text):
@@ -79,6 +82,10 @@ def fake_urlopen(req, timeout=None):
     assert req.headers["X-goog-api-key"] == "fake"
     if "batchEmbedContents" in req.full_url:
         out = {"embeddings": [{"values": _vec(r["content"]["parts"][0]["text"])} for r in body["requests"]]}
+    elif any("inline_data" in p for p in body["contents"][0]["parts"]):
+        PDF_CALLS.append(body["generationConfig"]["maxOutputTokens"])
+        out = {"candidates": [{"content": {"parts": [{"text": PDF_TEXT}]}, "finishReason": MODE["finish"]}],
+               "usageMetadata": {"promptTokenCount": 2600, "candidatesTokenCount": 40}}
     else:
         out = {"candidates": [{"content": {"parts": [{"text": "Resposta [docs/politica-exemplo.txt#1]"}]}}],
                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5}}
@@ -101,7 +108,9 @@ class Offline(unittest.TestCase):
     def setUp(self):
         STORE.clear()
         LOG.clear()
+        PDF_CALLS.clear()
         MODE["fail"] = None
+        MODE["finish"] = "STOP"
         ask._index = None
 
     def load_docs(self):
@@ -146,6 +155,66 @@ class Offline(unittest.TestCase):
         pieces = ingest.split("palavra " * 1000)
         self.assertGreater(len(pieces), 1)
         self.assertTrue(all(len(p) <= ingest.CHUNK for p in pieces))
+
+    # ---------- PDF ----------
+    def test_8_pdf_e_transcrito_uma_vez_e_fica_em_cache(self):
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 fake"
+        res = ingest.handler({}, None)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["transcritos"], ["docs/dudh.pdf"])
+        self.assertEqual((res["tokens_in"], res["tokens_out"]), (2600, 40))
+        self.assertEqual(len(PDF_CALLS), 1)
+        self.assertEqual(PDF_CALLS[0], ingest.MAX_PDF_TOKENS)
+        self.assertEqual(sum(k.startswith("cache/docs/dudh.pdf.") for k in STORE), 1)
+
+        res2 = ingest.handler({}, None)  # segunda execução: usa o cache
+        self.assertTrue(res2["ok"])
+        self.assertEqual(len(PDF_CALLS), 1)
+        self.assertNotIn("tokens_in", res2)
+
+        status, body = post("Todos os seres humanos nascem livres e iguais?")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["sources"][0].startswith("docs/dudh.pdf#"))
+
+    def test_9_pdf_alterado_e_transcrito_de_novo(self):
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 versao 1"
+        ingest.handler({}, None)
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 versao 2"
+        ingest.handler({}, None)
+        self.assertEqual(len(PDF_CALLS), 2)
+
+    def test_10_pdf_grande_demais_e_ignorado(self):
+        STORE["docs/enorme.pdf"] = b"0" * (ingest.MAX_PDF_BYTES + 1)
+        STORE["docs/ok.txt"] = b"texto simples"
+        res = ingest.handler({}, None)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["ignorados"][0]["arquivo"], "docs/enorme.pdf")
+        self.assertEqual(PDF_CALLS, [])
+
+    def test_11_cota_esgotada_no_pdf_nao_derruba_a_ingestao(self):
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 fake"
+        MODE["fail"] = 429
+        res = ingest.handler({}, None)  # só há o PDF: sem trechos
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["ignorados"][0]["motivo"], "cota do Gemini esgotada")
+        self.assertFalse(any(k.startswith("cache/") for k in STORE))
+
+    def test_12_transcricao_cortada_avisa_e_nao_vai_para_o_cache(self):
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 fake"
+        MODE["finish"] = "MAX_TOKENS"
+        res = ingest.handler({}, None)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["truncados"], ["docs/dudh.pdf"])
+        self.assertFalse(any(k.startswith("cache/") for k in STORE))
+
+    def test_13_sem_tempo_o_pdf_fica_pendente(self):
+        STORE["docs/dudh.pdf"] = b"%PDF-1.7 fake"
+        STORE["docs/ok.txt"] = b"texto simples"
+        pouco_tempo = types.SimpleNamespace(get_remaining_time_in_millis=lambda: 20_000)
+        res = ingest.handler({}, pouco_tempo)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["pendentes"], ["docs/dudh.pdf"])
+        self.assertEqual(PDF_CALLS, [])
 
 
 if __name__ == "__main__":
