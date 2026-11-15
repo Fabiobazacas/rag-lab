@@ -169,7 +169,7 @@ Não testado ainda: execução dentro do Cloud Shell (instalação do Terraform,
 
 ### Teste do suporte a PDF (15/11/2026)
 
-Mesmo ambiente, com `tests/test_offline.py` em 13 testes (6 novos, de PDF) e um teste real na AWS com um PDF escaneado de 5 páginas (2,8 MB, uma certidão de matrícula de imóvel). Esse PDF foi retirado do repositório por conter dados pessoais; o exemplo atual é `docs-pdf/dudh.pdf`, que não passou pelo teste na AWS (só a transcrição direta no Gemini, sem a Lambda).
+Mesmo ambiente, com `tests/test_offline.py` em 13 testes (6 novos, de PDF) e um teste real na AWS com um PDF escaneado de 5 páginas (2,8 MB, uma certidão de matrícula de imóvel). Esse PDF foi retirado do repositório por conter dados pessoais; o exemplo atual é `docs-pdf/dudh.pdf`, testado na AWS na seção seguinte.
 
 | Item | Resultado |
 |---|---|
@@ -180,6 +180,19 @@ Mesmo ambiente, com `tests/test_offline.py` em 13 testes (6 novos, de PDF) e um 
 | `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras |
 
 A transcrição é feita por um modelo e pode ter erros. Eu li as respostas, mas não confrontei o texto inteiro com o PDF.
+
+### Teste do fluxo padrão com a DUDH (15/11/2026)
+
+O fluxo do CLOUDSHELL.md (`docs-exemplo/` mais `docs-pdf/dudh.pdf` no mesmo bucket) foi executado na AWS a partir do Windows, com `terraform apply` e `destroy` completos.
+
+| Item | Resultado |
+|---|---|
+| Primeira ingestão | 12 trechos; `transcritos: ["docs/dudh.pdf"]`; 3.773 tokens de entrada e 2.728 de saída; 10 s |
+| Segunda ingestão | 2 s, sem `transcritos` (cache) |
+| Pergunta sobre o prazo de reclamação | "5 dias úteis", fonte `docs/politica-exemplo.txt#1` |
+| Pergunta sobre o artigo 1 da DUDH | cita "livres e iguais em dignidade e em direitos", fontes `docs/dudh.pdf#2` e `#3` |
+| Pergunta fora da base | "Não encontrei na base." |
+| `terraform destroy` + `s3 rb` | 11 recursos destruídos; sem sobras |
 
 ## Problemas conhecidos
 

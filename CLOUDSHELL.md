@@ -102,32 +102,50 @@ Guarde como evidência a tela final do `terraform apply`.
 
 ### 3.1 Enviar os documentos e montar o índice
 
+Os documentos padrão deste roteiro são dois:
+
+| Arquivo | O que é | Formato |
+|---|---|---|
+| `docs-exemplo/politica-exemplo.txt` | política de atendimento fictícia | texto |
+| `docs-pdf/dudh.pdf` | Declaração Universal dos Direitos Humanos em português (ONU), 7 páginas, sem dados pessoais | PDF |
+
+Envie os dois e rode a ingestão uma vez:
+
 ```bash
 BUCKET=$(terraform output -raw bucket)
 aws s3 cp docs-exemplo/ "s3://$BUCKET/docs/" --recursive
-aws lambda invoke --function-name "$(terraform output -raw ingest_function)" /dev/stdout
-```
-
-Esperado: `{"ok": true, "chunks": N}`. Se aparecer erro, veja "Problemas comuns".
-
-Para testar com um PDF escaneado (opcional), envie o PDF de exemplo e rode a ingestão de novo:
-
-```bash
 aws s3 cp docs-pdf/dudh.pdf "s3://$BUCKET/docs/"
 aws lambda invoke --function-name "$(terraform output -raw ingest_function)" /dev/stdout
 ```
 
-A resposta passa a mostrar `transcritos` e os tokens gastos (cerca de 6.500 na primeira vez). Depois a transcrição vem do cache e não gasta mais. Para usar outro PDF, troque o arquivo. Veja "PDF e consumo de tokens do Gemini" no README, e não use documento com dado pessoal real.
+Esperado na primeira execução (cerca de 10 s):
+
+```json
+{"ok": true, "chunks": 12, "transcritos": ["docs/dudh.pdf"], "tokens_in": 3773, "tokens_out": 2728}
+```
+
+- O Gemini transcreve o PDF e gasta cerca de 6.500 tokens (3.773 de entrada e 2.728 de saída), uma única vez. A transcrição fica no cache (`cache/` no bucket).
+- Se rodar a ingestão de novo sem mudar o PDF, a resposta vem sem `transcritos` nem tokens, em poucos segundos.
+- Se aparecer `ignorados` ou `pendentes` na resposta, ou erro, veja "Problemas comuns" e a seção "PDF e consumo de tokens do Gemini" do README.
+- Para usar outro PDF, coloque-o em `docs/` do bucket. Não use documento com dado pessoal real: o texto inteiro vai para o Google.
 
 ### 3.2 Fazer perguntas
 
+Uma pergunta para cada documento:
+
 ```bash
 URL=$(terraform output -raw api_url)
+
+# Sobre o texto (politica-exemplo.txt)
 curl -s -X POST "$URL" -H 'Content-Type: application/json' \
   -d '{"question":"Qual o prazo de resposta de uma reclamação formal?"}'
+
+# Sobre o PDF da ONU (dudh.pdf)
+curl -s -X POST "$URL" -H 'Content-Type: application/json' \
+  -d '{"question":"O que diz o artigo 1 da Declaração Universal dos Direitos Humanos?"}'
 ```
 
-Esperado: uma resposta com fontes no formato `[docs/...#n]`, mais `tokens_in` e `tokens_out`.
+Esperado: uma resposta com fontes no formato `[docs/...#n]`, mais `tokens_in` e `tokens_out`. A primeira cita `docs/politica-exemplo.txt`, e a segunda cita `docs/dudh.pdf` e fala que todos os seres humanos nascem livres e iguais em dignidade e em direitos. A resposta do modelo pode variar na redação.
 
 Testes extras:
 
