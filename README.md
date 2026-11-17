@@ -227,6 +227,20 @@ Pergunta composta: "Compare o prazo de resposta de uma reclamação formal com o
 
 Pergunta simples sobre o prazo: o agente fez 1 busca (1.425 / 56 tokens, 2 s). Pergunta fora da base (capital da França): 1 busca e "não encontrei". Os números de uma só execução variam com o modelo.
 
+### Teste do exemplo coerente com a DUDH (16/11/2026)
+
+O `politica-exemplo.txt` reescrito (cita os artigos 1, 2, 8, 12 e 19 da DUDH) foi testado na AWS com `docs-pdf/dudh.pdf`, com `apply` e `destroy` completos (16 recursos, sem sobras).
+
+| Item | Resultado |
+|---|---|
+| Ingestão | 13 trechos (11 do PDF e 2 do txt: o texto passa de 1.050 caracteres, então a sobreposição gera um segundo trecho curto) |
+| Prazo de reclamação (`/ask`) | "5 dias úteis", fonte `docs/politica-exemplo.txt#1` |
+| Artigo 1 (`/ask`) | cita o texto do artigo, fontes `docs/dudh.pdf#2` e `#3` |
+| Pergunta combinada em `/ask` | listou os 5 artigos, mas só com o que a política diz, sem o texto da DUDH (1.311 / 263 tokens; 3 s) |
+| Pergunta combinada em `/agent` | 2 buscas; listou os 5 artigos com o texto de cada um (`docs/dudh.pdf#3`, `#4`, `#5` e `#7`) e a relação com a política (4.354 / 542 tokens; 20 s) |
+
+O tempo do `/agent` ficou perto do limite interno de 22 s. Os números de uma só execução variam.
+
 ## Problemas conhecidos
 
 | Sintoma | Causa | O que fazer |

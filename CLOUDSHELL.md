@@ -121,7 +121,7 @@ aws lambda invoke --function-name "$(terraform output -raw ingest_function)" /de
 Esperado na primeira execução (cerca de 10 s):
 
 ```json
-{"ok": true, "chunks": 12, "transcritos": ["docs/dudh.pdf"], "tokens_in": 3773, "tokens_out": 2728}
+{"ok": true, "chunks": 13, "transcritos": ["docs/dudh.pdf"], "tokens_in": 3773, "tokens_out": 2728}
 ```
 
 - O Gemini transcreve o PDF e gasta cerca de 6.500 tokens (3.773 de entrada e 2.728 de saída), uma única vez. A transcrição fica no cache (`cache/` no bucket).
@@ -157,6 +157,8 @@ curl -s -X POST "$URL" -H 'Content-Type: application/json' -d "$PERGUNTA"
 AGENT=$(terraform output -raw agent_url)
 curl -s -X POST "$AGENT" -H 'Content-Type: application/json' -d "$PERGUNTA"
 ```
+
+Esperado: o `/ask` lista os artigos 1, 2, 8, 12 e 19 só com o que a política diz (fonte `docs/politica-exemplo.txt#1`). O `/agent` faz 2 ou mais buscas e acrescenta o texto de cada artigo, citando `docs/dudh.pdf#...`. O `/agent` leva de 4 a 20 s nessa pergunta; o limite da função é 30 s.
 
 Testes extras:
 
