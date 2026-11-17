@@ -106,7 +106,7 @@ Os documentos padrão deste roteiro são dois:
 
 | Arquivo | O que é | Formato |
 |---|---|---|
-| `docs-exemplo/politica-exemplo.txt` | política de atendimento fictícia | texto |
+| `docs-exemplo/politica-exemplo.txt` | política de atendimento fictícia, que cita artigos da DUDH (1, 2, 8, 12 e 19) | texto |
 | `docs-pdf/dudh.pdf` | Declaração Universal dos Direitos Humanos em português (ONU), 7 páginas, sem dados pessoais | PDF |
 
 Envie os dois e rode a ingestão uma vez:
@@ -146,6 +146,17 @@ curl -s -X POST "$URL" -H 'Content-Type: application/json' \
 ```
 
 Esperado: uma resposta com fontes no formato `[docs/...#n]`, mais `tokens_in` e `tokens_out`. A primeira cita `docs/politica-exemplo.txt`, e a segunda cita `docs/dudh.pdf` e fala que todos os seres humanos nascem livres e iguais em dignidade e em direitos. A resposta do modelo pode variar na redação.
+
+Pergunta que combina os dois documentos: a política cita artigos da DUDH, e o texto de cada artigo está só no PDF. Compare `/ask` (uma busca) com `/agent` (o modelo busca mais de uma vez):
+
+```bash
+PERGUNTA='{"question":"A política de atendimento cita artigos da Declaração Universal dos Direitos Humanos. Quais são e o que cada um diz?"}'
+
+curl -s -X POST "$URL" -H 'Content-Type: application/json' -d "$PERGUNTA"
+
+AGENT=$(terraform output -raw agent_url)
+curl -s -X POST "$AGENT" -H 'Content-Type: application/json' -d "$PERGUNTA"
+```
 
 Testes extras:
 

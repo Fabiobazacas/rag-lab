@@ -100,7 +100,7 @@ A `ask` segue um fluxo fixo: uma busca com a pergunta literal e uma resposta. A 
 ```bash
 AGENT=$(terraform output -raw agent_url)
 curl -s -X POST "$AGENT" -H 'Content-Type: application/json' \
-  -d '{"question":"Compare o prazo de reclamação formal com o artigo 1 da Declaração Universal dos Direitos Humanos."}'
+  -d '{"question":"A política de atendimento cita artigos da Declaração Universal dos Direitos Humanos. Quais são e o que cada um diz?"}'
 ```
 
 A resposta traz, além de `answer`, `sources`, `tokens_in` e `tokens_out`, a lista `steps` com cada busca feita (`query` e `sources`). Compare com a mesma pergunta em `/ask`.
